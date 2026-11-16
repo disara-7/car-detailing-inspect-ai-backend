@@ -3,6 +3,11 @@
   "name": "car-detailing-inspect-ai-backend",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
+  // Keep the *.workers.dev URL alongside the custom domain.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "api.car-detailing-inspect-ai.dev", "custom_domain": true }
+  ],
   "observability": {
     "enabled": true
   },
