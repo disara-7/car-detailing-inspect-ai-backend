@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { z } from "zod";
-import { DEFAULT_GEMINI_MODEL, MAX_BODY_BYTES } from "./config";
+import { DEFAULT_GEMINI_MODEL, MAX_BODY_BYTES, RATE_LIMIT_KEY_PREFIX } from "./config";
 import { AiFailedError, assessWithGemini } from "./gemini";
 import { AssessRequestSchema, AssessResponseSchema, type ErrorCodeSchema } from "./schema";
 import { buildAssessResponse } from "./scoring";
@@ -11,9 +11,12 @@ import { verifyTurnstile } from "./turnstile";
 
 export interface Env {
   GEMINI_KEY: string;
-  TURNSTILE_SECRET: string;
+  /** Optional. When set, every request must carry a valid Turnstile token. */
+  TURNSTILE_SECRET?: string;
   ALLOWED_ORIGINS?: string;
   GEMINI_MODEL?: string;
+  /** Workers Rate Limiting binding (wrangler.jsonc "ratelimits"). Skipped if absent. */
+  ASSESS_RATE_LIMITER?: RateLimit;
 }
 
 type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -50,6 +53,24 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 app.post(
   "/api/assess",
+  // Rate limit first, so throttled clients cost no body parsing, Turnstile or Gemini calls.
+  async (c, next) => {
+    const limiter = c.env.ASSESS_RATE_LIMITER;
+    if (limiter) {
+      const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+      const { success } = await limiter.limit({ key: RATE_LIMIT_KEY_PREFIX + ip });
+      if (!success) {
+        console.warn(JSON.stringify({ event: "rate_limited" }));
+        return errorResponse(
+          c,
+          429,
+          "RATE_LIMITED",
+          "Too many assessments. Please wait a minute and try again.",
+        );
+      }
+    }
+    await next();
+  },
   bodyLimit({
     maxSize: MAX_BODY_BYTES,
     onError: (c) =>
@@ -58,8 +79,8 @@ app.post(
   async (c) => {
     const started = Date.now();
 
-    if (!c.env.GEMINI_KEY || !c.env.TURNSTILE_SECRET) {
-      console.error(JSON.stringify({ event: "misconfigured", missing: "secrets" }));
+    if (!c.env.GEMINI_KEY) {
+      console.error(JSON.stringify({ event: "misconfigured", missing: "GEMINI_KEY" }));
       return errorResponse(c, 500, "INTERNAL", "Server is not configured");
     }
 
@@ -82,13 +103,18 @@ app.post(
     const categories = request.parts.map((p) => p.category);
     const imageCount = request.parts.reduce((n, p) => n + p.images.length, 0);
 
-    const human = await verifyTurnstile(
-      request.turnstileToken,
-      c.env.TURNSTILE_SECRET,
-      c.req.header("CF-Connecting-IP"),
-    );
-    if (!human) {
-      return errorResponse(c, 403, "BOT_CHECK_FAILED", "Bot check failed. Please try again.");
+    // Turnstile is optional: it is enforced only when TURNSTILE_SECRET is configured.
+    if (c.env.TURNSTILE_SECRET) {
+      const human =
+        request.turnstileToken !== undefined &&
+        (await verifyTurnstile(
+          request.turnstileToken,
+          c.env.TURNSTILE_SECRET,
+          c.req.header("CF-Connecting-IP"),
+        ));
+      if (!human) {
+        return errorResponse(c, 403, "BOT_CHECK_FAILED", "Bot check failed. Please try again.");
+      }
     }
 
     let partResults;

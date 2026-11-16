@@ -31,7 +31,7 @@ Request (see `src/schema.ts`):
 
 ```json
 {
-  "turnstileToken": "<token from the Turnstile widget>",
+  "turnstileToken": "<optional: only needed when TURNSTILE_SECRET is set>",
   "parts": [
     { "category": "door",  "images": ["<base64 JPEG>", "<base64 JPEG>"] },
     { "category": "wheel", "images": ["<base64 JPEG>"] }
@@ -62,22 +62,23 @@ Every error uses the same shape: `{ "error": { "code": "...", "message": "..." }
 | Status | Code                | When                                                         |
 | ------ | ------------------- | ------------------------------------------------------------ |
 | 400    | `INVALID_REQUEST`   | Body is not JSON, fails the schema, or the route is unknown (404) |
-| 403    | `BOT_CHECK_FAILED`  | Turnstile verification failed                                |
+| 403    | `BOT_CHECK_FAILED`  | Turnstile is enabled and the token is missing or invalid     |
 | 413    | `PAYLOAD_TOO_LARGE` | Body is over 8 MB                                            |
-| 429    | `RATE_LIMITED`      | Reserved for when rate limiting is added (see below)         |
+| 429    | `RATE_LIMITED`      | More than 5 assessments per minute from one IP               |
 | 502    | `AI_FAILED`         | Gemini failed or returned invalid output twice               |
 | 500    | `INTERNAL`          | Missing secrets or an unexpected error                       |
 
 ### How a request is processed
 
 1. CORS allows only origins in `ALLOWED_ORIGINS`. OPTIONS preflight is handled.
-2. The body size is checked (8 MB), then the JSON is validated with `AssessRequestSchema`.
-3. The Turnstile token is verified with `siteverify`, sending the `CF-Connecting-IP` header value.
-4. Gemini is called **once** with all parts. Each part is sent as a `Category: <name>` text label followed by its images.
-5. Gemini's JSON is validated against `PartResultSchema`. Every requested category must appear exactly once. If anything is wrong, the call is retried once and then fails with `502 AI_FAILED`. Scores are never invented or filled in.
-6. The overall score is a weighted average using the weights in `src/config.ts`. Parts with `photoQuality: "poor"` count at half weight. The result is rounded. Labels: 0-20 clean, 21-50 light, 51-80 moderate, 81-100 heavy.
-7. `recommendedServices` is the deduplicated union of the parts' services. Services needed by more parts come first. Ties follow the order of the service menu.
-8. A fixed disclaimer is added, and the response is validated with `AssessResponseSchema`.
+2. The per-IP rate limit is checked (`ASSESS_RATE_LIMITER`, 5 requests per 60 s).
+3. The body size is checked (8 MB), then the JSON is validated with `AssessRequestSchema`.
+4. **Only if `TURNSTILE_SECRET` is set**, the Turnstile token is required and verified with `siteverify`, sending the `CF-Connecting-IP` header value. Turnstile is currently **off**.
+5. Gemini is called **once** with all parts. Each part is sent as a `Category: <name>` text label followed by its images.
+6. Gemini's JSON is validated against `PartResultSchema`. Every requested category must appear exactly once. If anything is wrong, the call is retried once and then fails with `502 AI_FAILED`. Scores are never invented or filled in.
+7. The overall score is a weighted average using the weights in `src/config.ts`. Parts with `photoQuality: "poor"` count at half weight. The result is rounded. Labels: 0-20 clean, 21-50 light, 51-80 moderate, 81-100 heavy.
+8. `recommendedServices` is the deduplicated union of the parts' services. Services needed by more parts come first. Ties follow the order of the service menu.
+9. A fixed disclaimer is added, and the response is validated with `AssessResponseSchema`.
 
 ## Local development
 
@@ -94,11 +95,11 @@ npm run dev                      # wrangler dev, http://localhost:8787
 | Name               | Kind   | Notes                                                                                       |
 | ------------------ | ------ | ------------------------------------------------------------------------------------------- |
 | `GEMINI_KEY`       | secret | Google AI Studio API key                                                                    |
-| `TURNSTILE_SECRET` | secret | For local dev, use Cloudflare's always-pass test secret `1x0000000000000000000000000000000AA` |
+| `TURNSTILE_SECRET` | secret | **Optional.** Unset means no bot check. To enable it locally, use Cloudflare's always-pass test secret `1x0000000000000000000000000000000AA` |
 | `ALLOWED_ORIGINS`  | var    | Comma-separated, for example `http://localhost:3000,https://app.example.com`                |
 | `GEMINI_MODEL`     | var    | Defaults to `gemini-3.8-flash`                                                              |
 
-With the always-pass test secret, any non-empty `turnstileToken` works. On the frontend, use the matching test site key `1x00000000000000000000AA`. See [Turnstile testing](https://developers.cloudflare.com/turnstile/troubleshooting/testing/).
+If you enable Turnstile with the always-pass test secret, any non-empty `turnstileToken` works. On the frontend, use the matching test site key `1x00000000000000000000AA`. See [Turnstile testing](https://developers.cloudflare.com/turnstile/troubleshooting/testing/).
 
 Other scripts:
 
@@ -117,7 +118,6 @@ curl -s http://localhost:8787/api/assess \
   -H "Content-Type: application/json" \
   -d @- <<EOF
 {
-  "turnstileToken": "test-token",
   "parts": [
     { "category": "door", "images": ["$IMG"] }
   ]
@@ -132,9 +132,12 @@ For several large images, write the JSON to a file and use `-d @body.json` so yo
 ```sh
 npx wrangler login
 npx wrangler secret put GEMINI_KEY
-npx wrangler secret put TURNSTILE_SECRET     # your real Turnstile secret
 npm run deploy                               # wrangler deploy
 ```
+
+Turnstile is optional. To turn it on, run `npx wrangler secret put TURNSTILE_SECRET` and add the widget to the frontend. To turn it off, run `npx wrangler secret delete TURNSTILE_SECRET`.
+
+Also set a spending cap or quota limit on your Gemini key (AI Studio or Google Cloud billing). Without Turnstile, the rate limit and that cap are what stop a script from running up costs.
 
 Before deploying, add your production frontend origin to `ALLOWED_ORIGINS` in `wrangler.jsonc` (for example `"http://localhost:3000,https://app.example.com"`). You can also change it in the Cloudflare dashboard.
 
@@ -161,12 +164,11 @@ The scoring rubric and prompt text are in `src/prompt.ts`.
 
 Logs are JSON lines containing only categories, counts, status codes, timings and failure reasons. Image data, the API key and Gemini's raw output are never logged. Error responses never include stack traces. Workers Logs are enabled through `observability` in `wrangler.jsonc`.
 
-## Adding rate limiting later (optional)
+## Rate limiting
 
-Turnstile stops basic bots, but it does not limit how often a real user can call the API. Each call costs Gemini tokens. Options:
+`POST /api/assess` is limited to **5 requests per 60 seconds per client IP** by the `ASSESS_RATE_LIMITER` binding (Workers Rate Limiting, available on the free plan). Requests over the limit get `429 RATE_LIMITED` before any body parsing or Gemini call. Change `limit` and `period` (10 or 60 seconds) in `wrangler.jsonc`.
 
-- **Workers Rate Limiting binding**: add a `ratelimits` entry in `wrangler.jsonc`, call `env.RATE_LIMITER.limit({ key: ip })` at the start of `/api/assess`, and return `429 RATE_LIMITED` (the error code is already in the contract). See <https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/>.
-- **WAF rate limiting rules** on a custom domain in the Cloudflare dashboard. No code changes are needed.
+The limiter counts per Cloudflare location and is eventually consistent, so treat it as abuse protection, not an exact quota. See <https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/>. For stricter control on a custom domain, you can also add **WAF rate limiting rules** in the dashboard.
 
 ## Defaults chosen where the spec was open
 
@@ -177,7 +179,7 @@ Turnstile stops basic bots, but it does not limit how often a real user can call
 - **Service names** from Gemini are matched to the menu ignoring case. Names not on the menu are dropped instead of failing the request.
 - **Response part order** follows the request order.
 - **`data:` prefix**: the contract says not to send one, but a `data:image/...;base64,` prefix is stripped if present rather than being sent to Gemini.
-- **Turnstile** fails closed: if `siteverify` cannot be reached, the request gets `403 BOT_CHECK_FAILED`.
+- **Turnstile** is off unless `TURNSTILE_SECRET` is set, so `turnstileToken` is optional in the schema (a change from the original contract). When enabled, it fails closed: if `siteverify` cannot be reached, the request gets `403 BOT_CHECK_FAILED`.
 - **CORS**: requests from origins not on the list get no CORS headers, so the browser blocks them. The server does not reject them itself, and Turnstile is the real gate. Allowed headers: `Content-Type`. Allowed methods: GET, POST and OPTIONS.
 - **Unknown routes** return `404` with code `INVALID_REQUEST`, because the contract has no `NOT_FOUND` code.
 - **Free-plan CPU budget**: the free plan allows about 10 ms of CPU time per request. Time spent waiting on Gemini does not count, but parsing and re-serialising a multi-megabyte body does. The frontend should resize and compress photos before uploading, for example to about 1600 px on the long edge at JPEG quality 0.8 (roughly 200-400 KB each). This keeps requests fast and well under the limit. If you regularly send near-8 MB bodies, consider the Workers Paid plan.

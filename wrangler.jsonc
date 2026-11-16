@@ -8,6 +8,15 @@
   "routes": [
     { "pattern": "api.car-detailing-inspect-ai.dev", "custom_domain": true }
   ],
+  // Per-IP rate limit for POST /api/assess (Workers Rate Limiting, available on the free plan).
+  // period must be 10 or 60 seconds. namespace_id is any number unique within your account.
+  "ratelimits": [
+    {
+      "name": "ASSESS_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ],
   "observability": {
     "enabled": true
   },

@@ -25,7 +25,7 @@ const geminiOutput = {
   ],
 };
 
-function post(body: unknown, headers: Record<string, string> = {}) {
+function post(body: unknown, headers: Record<string, string> = {}, envOverride: Env = env) {
   return app.request(
     "/api/assess",
     {
@@ -33,7 +33,7 @@ function post(body: unknown, headers: Record<string, string> = {}) {
       headers: { "content-type": "application/json", ...headers },
       body: typeof body === "string" ? body : JSON.stringify(body),
     },
-    env,
+    envOverride,
   );
 }
 
@@ -96,6 +96,38 @@ describe("API", () => {
     fetchMock.mockImplementationOnce(async () => jsonResponse({ success: false, "error-codes": ["invalid-input-response"] }));
     await expectError(await post(validBody), 403, "BOT_CHECK_FAILED");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a missing token when Turnstile is enabled", async () => {
+    const { turnstileToken: _omit, ...noToken } = validBody;
+    await expectError(await post(noToken), 403, "BOT_CHECK_FAILED");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips Turnstile when TURNSTILE_SECRET is not set", async () => {
+    const { turnstileToken: _omit, ...noToken } = validBody;
+    const { TURNSTILE_SECRET: _secret, ...envWithoutTurnstile } = env;
+    const res = await post(noToken, {}, envWithoutTurnstile);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("generativelanguage.googleapis.com");
+  });
+
+  it("returns 429 when the rate limiter rejects the request", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    const res = await post(validBody, { "CF-Connecting-IP": "203.0.113.9" }, {
+      ...env,
+      ASSESS_RATE_LIMITER: { limit } as unknown as RateLimit,
+    });
+    await expectError(res, 429, "RATE_LIMITED");
+    expect(limit).toHaveBeenCalledWith({ key: "assess:203.0.113.9" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows the request when the rate limiter accepts it", async () => {
+    const limit = vi.fn(async () => ({ success: true }));
+    const res = await post(validBody, {}, { ...env, ASSESS_RATE_LIMITER: { limit } as unknown as RateLimit });
+    expect(res.status).toBe(200);
   });
 
   it("returns 502 when Gemini fails twice", async () => {

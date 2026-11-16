@@ -64,4 +64,10 @@ export const GEMINI_TIMEOUT_MS = 60_000;
 /** Maximum accepted request body size (about 8 MB). */
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Rate limiting is configured in wrangler.jsonc ("ratelimits": ASSESS_RATE_LIMITER).
+ * Requests are counted per client IP.
+ */
+export const RATE_LIMIT_KEY_PREFIX = "assess:";
+
 export const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";

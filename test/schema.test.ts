@@ -15,6 +15,11 @@ describe("AssessRequestSchema", () => {
     expect(AssessRequestSchema.safeParse(validRequest).success).toBe(true);
   });
 
+  it("accepts a request without a turnstile token", () => {
+    const { turnstileToken: _omit, ...noToken } = validRequest;
+    expect(AssessRequestSchema.safeParse(noToken).success).toBe(true);
+  });
+
   it("accepts all 8 categories with 4 images each", () => {
     const parts = ["door", "wheel", "bonnet", "roof", "bumper", "boot", "glass", "interior"].map(
       (category) => ({ category, images: Array(4).fill(FAKE_IMAGE) }),
