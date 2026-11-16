@@ -1,0 +1,13 @@
+# Copy to .dev.vars for local development (`wrangler dev`). Never commit .dev.vars.
+
+# Google AI Studio API key (https://aistudio.google.com/apikey)
+GEMINI_KEY=your-gemini-api-key
+
+# Cloudflare Turnstile test secret that always passes. Use your real secret in production.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+
+# Comma-separated CORS allow-list
+ALLOWED_ORIGINS=http://localhost:3000
+
+# Gemini model ID
+GEMINI_MODEL=gemini-3.8-flash

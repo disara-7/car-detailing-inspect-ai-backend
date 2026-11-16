@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "car-detailing-inspect-ai-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": {
+    "enabled": true
+  },
+  // Non-secret configuration. Override locally in .dev.vars.
+  // Secrets (GEMINI_KEY, TURNSTILE_SECRET) are set with `wrangler secret put`.
+  "vars": {
+    // Comma-separated list of origins allowed by CORS. Add your production frontend origin here.
+    "ALLOWED_ORIGINS": "http://localhost:3000",
+    // Gemini model ID. See README "Changing the Gemini model".
+    "GEMINI_MODEL": "gemini-3.8-flash"
+  }
+}

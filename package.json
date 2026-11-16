@@ -1,0 +1,29 @@
+{
+  "name": "car-detailing-inspect-ai-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker API that scores car detailing needs from photos using Gemini",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/disara-7/car-detailing-inspect-ai-backend.git"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "hono": "^4.13.19",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261116.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.163.0"
+  }
+}
