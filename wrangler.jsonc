@@ -10,7 +10,7 @@
   // Secrets (GEMINI_KEY, TURNSTILE_SECRET) are set with `wrangler secret put`.
   "vars": {
     // Comma-separated list of origins allowed by CORS. Add your production frontend origin here.
-    "ALLOWED_ORIGINS": "http://localhost:3000",
+    "ALLOWED_ORIGINS": "http://localhost:3000,https://car-detailing-inspect-ai-frontend.disara.workers.dev",
     // Gemini model ID. See README "Changing the Gemini model".
     "GEMINI_MODEL": "gemini-3.8-flash"
   }
